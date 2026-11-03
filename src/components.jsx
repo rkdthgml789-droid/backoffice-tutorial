@@ -1,20 +1,16 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
+import { Bukang } from "./Bukang.jsx";
+import { CHAPTERS, chapterOf } from "./journey.js";
 import {
-  ScanText,
   Check,
   RotateCcw,
-  CircleHelp,
-  Sparkles,
-  Trophy,
   ArrowLeft,
   ArrowRight,
   Target,
   LockKeyhole,
-  CheckCheck,
-  Keyboard,
   X,
 } from "lucide-react";
-import { TEXT, MISSIONS } from "./model.js";
+import { TEXT } from "./model.js";
 export function HighlightedText({ records }) {
   const active = records
     .filter((r) => r.status === "active")
@@ -38,167 +34,257 @@ export function HighlightedText({ records }) {
   return nodes;
 }
 
-export function TutorialGuide({ s, m, next, previous, setRestart }) {
+export function TutorialGuide({
+  s,
+  m,
+  action,
+  notice,
+  next,
+  previous,
+  setRestart,
+  start,
+  dismissIntro,
+}) {
+  const chapter = chapterOf(s.step);
+  const modal = !s.started || s.finished || s.intro;
+  const buttonRef = useRef(null),
+    guideRef = useRef(null);
+  useEffect(() => {
+    if (modal) {
+      buttonRef.current?.focus({ preventScroll: true });
+      if (guideRef.current) guideRef.current.scrollTop = 0;
+    }
+  }, [modal, s.intro, s.finished]);
+  const mood =
+    s.finished || s.done
+      ? "cheer"
+      : !s.started
+        ? "wave"
+        : notice?.type === "error"
+          ? "retry"
+          : "point";
   return (
-    <aside className="guide-column">
-      <div className="course-title">
-        <span className="tiny-pill">YOUR QUEST</span>
-        <span>
-          {String(s.step + 1).padStart(2, "0")} / {MISSIONS.length}
+    <aside
+      className={"guide-column bukang-guide " + (modal ? "guide-modal" : "")}
+      ref={guideRef}
+      onKeyDown={(e) => {
+        if (!modal || e.key !== "Tab") return;
+        const buttons = [
+          ...guideRef.current.querySelectorAll("button:not(:disabled)"),
+        ];
+        const first = buttons[0],
+          last = buttons.at(-1);
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }}
+      aria-label="부캉이 미션 안내"
+      data-tutorial-controls
+    >
+      <div className="companion">
+        <Bukang mood={mood} />
+        <span className="companion-name">
+          부캉이 <small>나의 첫 QC 동료</small>
         </span>
       </div>
-      <div className="guide-bubble">
-        <div className="guide-person">
-          <div className="mascot">
-            <ScanText size={22} />
-            <span>✦</span>
-          </div>
-          <div>
-            <strong>
-              루미 <span>온보딩 가이드</span>
-            </strong>
-            <small>차근차근, 함께 해봐요!</small>
-          </div>
-          <span className="speech-dots">•••</span>
+      <section
+        className="guide-bubble"
+        role={modal ? "dialog" : undefined}
+        aria-modal={modal ? "true" : undefined}
+        aria-labelledby="mission-title"
+      >
+        <span className="step-kicker">
+          {!s.started
+            ? "PROLOGUE · 첫 출근을 환영해요"
+            : s.finished
+              ? "JOURNEY COMPLETE · 여정 완료"
+              : `여정 ${chapter + 1} · 미션 ${s.step + 1} / 13`}
+        </span>
+        <h2 id="mission-title">
+          {!s.started
+            ? "반가워요, 매니저님!"
+            : s.finished
+              ? "첫 QC 여정, 완주!"
+              : s.intro
+                ? CHAPTERS[chapter].title
+                : m.title}
+        </h2>
+        <div className="dialogue" aria-live="polite" aria-atomic="true">
+          <p>
+            {!s.started
+              ? "안녕하세요, 매니저님! 저는 QC 바다를 함께 탐험할 상어 부캉이예요!"
+              : s.finished
+                ? "축하해요, 매니저님! 첫 QC 여정을 완주했어요! 검출, 취소, 원본 파일 규칙, QC스페이스 연결까지 모두 직접 해냈네요!"
+                : s.intro
+                  ? CHAPTERS[chapter].intro
+                  : action.line}
+          </p>
+          {!s.started && (
+            <p>
+              제가 알려드리는 곳을 하나씩 눌러보세요. 첫 업무도 함께라면 어렵지
+              않아요!
+            </p>
+          )}
         </div>
-        {s.finished ? (
+        {!s.started ? (
+          <button
+            ref={buttonRef}
+            className="button primary full"
+            onClick={start}
+          >
+            부캉이와 첫 업무 시작하기 <ArrowRight size={18} />
+          </button>
+        ) : s.intro ? (
+          <button
+            ref={buttonRef}
+            className="button primary full"
+            onClick={dismissIntro}
+          >
+            실습 시작 <ArrowRight size={18} />
+          </button>
+        ) : s.finished ? (
           <>
-            <div className="completion-trophy">
-              <Trophy size={43} />
+            <div className="earned-badges">
+              {CHAPTERS.filter((c, i) => s.badges?.includes(i)).map((c) => (
+                <span key={c.badge}>
+                  {c.icon} {c.badge}
+                </span>
+              ))}
             </div>
-            <span className="step-kicker">QUEST COMPLETE</span>
-            <h2>첫 QC 미션, 완주!</h2>
-            <p>
-              검출부터 원본 파일의 취소 규칙까지,
-              <br />
-              이제 실무에서도 자신 있게 시작하세요.
+            <p className="replay-summary">
+              다시 시작하면 진행·검출 데이터·배지를 초기화하고 선택한 실습용
+              데이터로 시작해요.
             </p>
-            <div className="achievement">
-              <CheckCheck size={19} /> QC Rookie 배지 획득
-            </div>
-            <button
-              className="button primary full"
-              onClick={() => setRestart(true)}
-            >
-              다른 미션 다시 연습하기 <RotateCcw size={15} />
-            </button>
-          </>
-        ) : !s.started ? (
-          <>
-            <span className="step-kicker">LET’S GET STARTED</span>
-            <h2>반가워요, 매니저님!</h2>
-            <p>
-              왼쪽의 시작 버튼을 눌러 주세요.
-              <br />
-              제가 다음 행동을 하나씩 알려드릴게요.
-            </p>
-            <div className="guide-tip">
-              <Sparkles size={17} />
-              <span>
-                직접 해봐야 내 것이 되니까.
-                <br />
-                설명보다 실습에 집중했어요.
-              </span>
-            </div>
+            {[
+              [0, "전체 여정 다시 시작"],
+              [3, "기본 검출 다시 연습"],
+              [6, "심화 검출 다시 연습"],
+              [9, "QC스페이스 다시 연습"],
+            ].map(([index, label]) => (
+              <button
+                ref={index === 0 ? buttonRef : undefined}
+                className="button light full completion-replay"
+                key={index}
+                onClick={() => setRestart(index)}
+              >
+                {label} <RotateCcw size={15} />
+              </button>
+            ))}
           </>
         ) : (
           <>
-            <span className="step-kicker">
-              MISSION {String(s.step + 1).padStart(2, "0")} · {m.section}
-            </span>
-            <h2>{m.title}</h2>
-            <p>
-              {s.step === 12
-                ? "워크스페이스에서 한빛공사 → 파일 A를 열어 취소 결과를 확인하세요. 1·2·3번 문항을 확인하고 검토 완료를 눌러 파일 목록의 QC 완료 상태까지 확인해 보세요."
-                : m.desc}
-            </p>
             <div className={"mission-check " + (s.done ? "checked" : "")}>
-              <span>{s.done ? <Check size={14} /> : <Target size={14} />}</span>
-              <div>
-                <small>이번 미션</small>
-                <strong>
-                  {s.step === 12
-                    ? "동기화 확인 후 3개 문항 검토 완료"
-                    : m.action}
-                </strong>
-              </div>
+              <span>{s.done ? <Check size={18} /> : <Target size={18} />}</span>
+              <strong>{action.hint}</strong>
             </div>
+            {notice && (
+              <p className={"companion-feedback " + notice.type}>
+                {notice.text}
+              </p>
+            )}
+            {s.done && CHAPTERS[chapter].end === s.step && (
+              <div className="achievement">
+                {CHAPTERS[chapter].icon} {CHAPTERS[chapter].badge} 배지 획득!
+              </div>
+            )}
             <div className="guide-controls">
               <button
-                className="button icon-button light"
+                className="button light"
                 aria-label="이전 단계"
                 disabled={!s.history.length}
                 onClick={previous}
               >
-                <ArrowLeft size={16} />
+                <ArrowLeft size={18} /> 이전
               </button>
               <button
-                className="button primary"
+                data-guide="next"
+                className={"button primary " + (s.done ? "next-ready" : "")}
                 disabled={!s.done}
                 onClick={next}
               >
                 {s.done
-                  ? s.step === MISSIONS.length - 1
-                    ? "튜토리얼 완료"
-                    : "다음 단계"
+                  ? s.step === 12
+                    ? "여정 완료"
+                    : "다음 미션"
                   : "미션을 완료해 주세요"}
-                {s.done ? <ArrowRight size={15} /> : <LockKeyhole size={14} />}
+                {s.done ? <ArrowRight size={18} /> : <LockKeyhole size={16} />}
               </button>
             </div>
-            <span className="guide-foot">
-              {s.done
-                ? "잘했어요! 다음 미션이 기다려요."
-                : "올바른 조작을 완료하면 다음 버튼이 열려요."}
-            </span>
           </>
         )}
-      </div>
-      <div className="chapter-list">
-        {["시작하기", "기본 검출", "심화 검출", "QC스페이스", "완료 확인"].map(
-          (name, i) => {
-            const isCurrent = m.section === name && !s.finished,
-              isPast =
-                s.step > MISSIONS.map((x) => x.section).lastIndexOf(name) ||
-                s.finished;
-            return (
-              <div
-                key={name}
-                className={
-                  (isCurrent ? "current " : "") + (isPast ? "past" : "")
-                }
-              >
-                <span className="chapter-number">
-                  {isPast ? <Check size={13} /> : i + 1}
-                </span>
-                <span>{name}</span>
-                {isCurrent && <span className="chapter-now">진행 중</span>}
-                {!isPast && !isCurrent && <LockKeyhole size={12} />}
-              </div>
-            );
-          },
-        )}
-      </div>
-      <div className="shortcut-card">
-        <Keyboard size={18} />
-        <strong>이것만 기억하세요</strong>
-        <p>
-          <kbd>E</kbd> + 드래그 <span>검출하기</span>
-        </p>
-        <p>
-          <kbd>D</kbd> + 드래그 <span>검출 취소</span>
-        </p>
-        <small>카테고리 토글을 켜면 키 없이 검출</small>
-      </div>
+      </section>
+      {!modal && (
+        <>
+          <div className="journey-map" aria-label="여정 지도">
+            {CHAPTERS.map((c, i) => {
+              const earned = s.badges?.includes(i);
+              return (
+                <div
+                  className={
+                    "journey-node " +
+                    (earned ? "earned" : i === chapter ? "current" : "locked")
+                  }
+                  key={c.title}
+                >
+                  <span>{earned ? c.icon : i + 1}</span>
+                  <div>
+                    <strong>{c.title}</strong>
+                    <small>
+                      {earned
+                        ? c.badge + " · 획득"
+                        : i === chapter
+                          ? "진행 중"
+                          : "잠김"}
+                    </small>
+                  </div>
+                  {earned ? (
+                    <Check size={16} />
+                  ) : (
+                    i !== chapter && <LockKeyhole size={14} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="key-reminder">
+            <kbd>E</kbd> 검출 <kbd>D</kbd> 취소{" "}
+            <span>키를 유지하며 드래그</span>
+          </div>
+        </>
+      )}
     </aside>
   );
 }
 export function ReplayDialog({ onClose, onRestart }) {
+  const dialog = useRef(null);
+  useEffect(() => {
+    const previous = document.activeElement;
+    return () => previous?.focus();
+  }, []);
   return (
     <div className="modal-backdrop">
       <section
         className="modal"
+        ref={dialog}
         onKeyDown={(e) => {
           if (e.key === "Escape") onClose();
+          if (e.key === "Tab") {
+            const buttons = [...dialog.current.querySelectorAll("button")];
+            const first = buttons[0],
+              last = buttons.at(-1);
+            if (e.shiftKey && document.activeElement === first) {
+              e.preventDefault();
+              last.focus();
+            }
+            if (!e.shiftKey && document.activeElement === last) {
+              e.preventDefault();
+              first.focus();
+            }
+          }
         }}
         role="dialog"
         aria-modal="true"
