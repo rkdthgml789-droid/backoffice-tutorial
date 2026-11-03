@@ -43,6 +43,7 @@ export function createDetection(records, { start, end, category, fileId }) {
     status: "active",
     detected: true,
     cancelled: false,
+    history: [{ type: "detected", fileId, at: new Date().toISOString() }],
   };
   return { records: [...records, record], record };
 }
@@ -62,7 +63,16 @@ export function cancelDetection(records, { start, end, fileId }) {
   return {
     records: records.map((r) =>
       r.id === record.id
-        ? { ...r, status: "cancelled", detected: false, cancelled: true }
+        ? {
+            ...r,
+            status: "cancelled",
+            detected: false,
+            cancelled: true,
+            history: [
+              ...(r.history || []),
+              { type: "cancelled", fileId, at: new Date().toISOString() },
+            ],
+          }
         : r,
     ),
     record,
@@ -203,6 +213,11 @@ export function initialState(index = 0) {
         : r,
     );
   return {
+    badges: [],
+    maxCompleted: 0,
+    question: 1,
+    viewed: [],
+    intro: false,
     started: index > 0,
     step: index,
     done: false,

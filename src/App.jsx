@@ -20,6 +20,13 @@ import {
   Keyboard,
   GraduationCap,
 } from "lucide-react";
+import {
+  currentAction,
+  CHAPTERS,
+  chapterOf,
+  validateMissionResult,
+} from "./journey.js";
+import { Spotlight, targetElement } from "./Spotlight.jsx";
 import { HighlightedText, TutorialGuide, ReplayDialog } from "./components.jsx";
 import {
   TEXT,
@@ -31,29 +38,6 @@ import {
   cancelDetection,
   rangeOf,
 } from "./model.js";
-function validateMissionResult(state) {
-  if (!state.done) return false;
-  const mission = MISSIONS[state.step];
-  if (!mission.text) return true;
-  const target = rangeOf(mission.text);
-  const matches = state.records.filter(
-    (r) => r.start === target.start && r.end === target.end,
-  );
-  if (["create", "category"].includes(mission.mode))
-    return matches.some(
-      (r) =>
-        r.status === "active" &&
-        r.sourceFileId === "A" &&
-        r.category === mission.category,
-    );
-  if (["cancel", "taskCancel"].includes(mission.mode))
-    return !matches.some((r) => r.status === "active");
-  if (mission.mode === "block")
-    return matches.some(
-      (r) => r.id === state.missionRecordId && r.status === "active",
-    );
-  return true;
-}
 const STORE = "qc-academy-v1";
 function load() {
   try {
@@ -83,16 +67,13 @@ function load() {
       s.state.step >= 0 &&
       s.state.step < MISSIONS.length
     )
-      return s.state;
+      return { ...initialState(), ...s.state };
   } catch {}
   return initialState();
 }
 function Logo() {
   return (
     <div className="brand">
-      <div className="brand-icon">
-        <ScanText size={23} />
-      </div>
       <span>
         findeet<span className="brand-dot">!</span>
         <small>QC ACADEMY</small>
@@ -105,9 +86,9 @@ function App() {
     [notice, setNotice] = useState(null),
     [restart, setRestart] = useState(false),
     [query, setQuery] = useState(""),
-    [held, setHeld] = useState(""),
-    [question, setQuestion] = useState(1),
-    [viewed, setViewed] = useState([1]);
+    [held, setHeld] = useState("");
+  const question = s.question ?? 1,
+    viewed = s.viewed ?? [];
   const keys = useRef(new Set()),
     gesture = useRef(null),
     bodyRef = useRef(null),
@@ -118,9 +99,29 @@ function App() {
     file = FILES.find((f) => f.id === s.fileId),
     progress = s.finished
       ? 100
-      : Math.round(((s.step + (s.done ? 1 : 0)) / MISSIONS.length) * 100);
+      : Math.round(((s.maxCompleted || 0) / MISSIONS.length) * 100);
+  const action = currentAction(s, held);
+  const guideModal = !s.started || s.finished || s.intro;
   const focus = (id) =>
-    s.started && !s.finished && !s.done && m.target === id ? " spotlight" : "";
+    s.started && !s.finished && !s.done && action.target === id
+      ? " spotlight"
+      : "";
+  useEffect(() => {
+    if (!s.done) return;
+    const chapter = chapterOf(s.step);
+    setS((prev) => {
+      const badges = prev.badges || [];
+      const award =
+        CHAPTERS[chapter].end === prev.step && !badges.includes(chapter);
+      const count = Math.max(prev.maxCompleted || 0, prev.step + 1);
+      if (!award && count === prev.maxCompleted) return prev;
+      return {
+        ...prev,
+        maxCompleted: count,
+        badges: award ? [...badges, chapter] : badges,
+      };
+    });
+  }, [s.done, s.step]);
   useEffect(() => {
     try {
       localStorage.setItem(STORE, JSON.stringify({ version: 1, state: s }));
@@ -145,6 +146,8 @@ function App() {
       }
     }
     function up(e) {
+      if (gesture.current?.key === e.key.toLowerCase())
+        gesture.current.interrupted = true;
       keys.current.delete(e.key.toLowerCase());
       setHeld([...keys.current].join("+").toUpperCase());
     }
@@ -162,8 +165,18 @@ function App() {
       window.removeEventListener("blur", clear);
     };
   }, []);
+  useEffect(() => {
+    setNotice(null);
+  }, [s.step, s.category]);
   const say = (text, type = "info") => setNotice({ text, type });
   function navigate(page, fileId = s.fileId) {
+    if (s.started && !s.finished) {
+      const expected = currentAction(s).nav;
+      if (expected !== page && expected !== `${page}:${fileId}`) {
+        say(currentAction(s).line, "error");
+        return;
+      }
+    }
     setS((prev) => {
       let done = prev.done;
       if (prev.started && !prev.finished) {
@@ -179,18 +192,14 @@ function App() {
         )
           done = true;
       }
-      return { ...prev, page, fileId, done };
+      return { ...prev, page, fileId, done, question: 1, viewed: [] };
     });
     setNotice(null);
-    setQuestion(1);
-    setViewed([1]);
   }
   function reset(index) {
-    setS({ ...initialState(index), started: true });
+    setS({ ...initialState(index), started: index !== 0, intro: index > 0 });
     setNotice(null);
     setRestart(false);
-    setQuestion(1);
-    setViewed([1]);
     keys.current.clear();
     setHeld("");
     window.getSelection()?.removeAllRanges();
@@ -207,6 +216,7 @@ function App() {
       step: s.step + 1,
       done: false,
       category: null,
+      intro: chapterOf(s.step + 1) !== chapterOf(s.step),
       history: [...history, snapshot],
     });
     setNotice(null);
@@ -246,8 +256,11 @@ function App() {
     const mission = MISSIONS[now.step];
     const cancel = g.key === "d" && keys.current.has("d"),
       detect = g.key === "e" && keys.current.has("e");
-    if (g.key && !cancel && !detect) {
-      say("단축키를 누른 상태로 드래그를 끝내 주세요.", "error");
+    if (g.key && (g.interrupted || (!cancel && !detect))) {
+      say(
+        "키가 풀렸어요. 단축키를 누른 상태로 처음부터 다시 드래그해 주세요.",
+        "error",
+      );
       return;
     }
     if (!cancel && !detect && !now.category) {
@@ -268,7 +281,13 @@ function App() {
       start === rangeOf(mission.text).start &&
       end === rangeOf(mission.text).end;
     if (result.error) {
-      say(result.error, "error");
+      say(
+        result.error +
+          (mission.text
+            ? ` ‘${mission.text}’의 처음부터 끝까지 선택해 주세요.`
+            : ""),
+        "error",
+      );
       if (
         result.blocked &&
         now.step === 7 &&
@@ -332,8 +351,8 @@ function App() {
     });
     say(
       success
-        ? "미션 성공! 올바르게 처리했어요. 다음 단계로 이동하세요."
-        : `${cancel ? "검출을 취소했어요." : "선택한 텍스트를 " + category + "로 검출했어요."} ${now.started && !now.done && !success ? "현재 미션의 텍스트와 조작 방법을 확인해 주세요." : ""}`,
+        ? "미션 성공! 올바르게 처리했어요. 다음 미션으로 이동하세요."
+        : `${cancel ? "검출을 취소했어요." : "선택한 텍스트를 " + category + "로 검출했어요."} ${now.started && !now.done && !success ? "잘못 검출했다면 D로 같은 범위를 취소한 뒤 안내된 카테고리와 텍스트로 다시 시도해 주세요." : ""}`,
       success ? "success" : "info",
     );
     selection.removeAllRanges();
@@ -365,8 +384,42 @@ function App() {
     </>
   );
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div
+      className="app-shell"
+      onClickCapture={(e) => {
+        const controls = e.target.closest(
+          "[data-tutorial-controls], .modal-backdrop, [data-replay-control]",
+        );
+        if (controls) return;
+        if (guideModal) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        const button = e.target.closest("button, input");
+        if (!button || !s.started || s.finished) return;
+        const target = targetElement(action.target);
+        // Recovery tools remain available for wrong categories or accidental detections.
+        const recovery =
+          (action.target === "text" || (s.done && m.text)) &&
+          button.closest(".category-bar");
+        if (target?.contains(button) || button === target || recovery) return;
+        e.preventDefault();
+        e.stopPropagation();
+        say(action.line, "error");
+      }}
+    >
+      <Spotlight
+        target={action.target}
+        scene={s.page + s.step}
+        hidden={guideModal || restart}
+      />
+      {guideModal && <div className="intro-backdrop" aria-hidden="true" />}
+      <aside
+        className="sidebar"
+        inert={guideModal || restart ? true : undefined}
+        aria-hidden={guideModal || restart ? true : undefined}
+      >
         <Logo />
         <div className="space-label">MANAGER WORKSPACE</div>
         <nav aria-label="주 메뉴">
@@ -374,7 +427,7 @@ function App() {
             onClick={() => navigate("home")}
             className={s.page === "home" ? "selected" : ""}
           >
-            <LayoutDashboard size={18} /> 대시보드
+            <LayoutDashboard size={18} /> 홈
           </button>
           <button
             onClick={() => navigate("workspace")}
@@ -390,6 +443,13 @@ function App() {
             <Layers size={18} /> 워크스페이스{" "}
             <span className="nav-count">2</span>
           </button>
+          {["files", "editor"].includes(s.page) && (
+            <div className="nav-submenu">
+              <span>워크스페이스 상세</span>
+              <span>QC 워크스페이스</span>
+              <span>작업실</span>
+            </div>
+          )}
           <button
             onClick={() => navigate("qc")}
             className={
@@ -415,7 +475,11 @@ function App() {
           </div>
           <small>{progress}% 학습 완료</small>
         </div>
-        <button className="help-link" onClick={() => setRestart(true)}>
+        <button
+          className="help-link"
+          data-replay-control
+          onClick={() => setRestart(true)}
+        >
           <CircleHelp size={17} /> 튜토리얼 센터
         </button>
         <div className="profile">
@@ -428,7 +492,11 @@ function App() {
         </div>
       </aside>
       <div className="main-shell">
-        <header className="topbar">
+        <header
+          className="topbar"
+          inert={guideModal || restart ? true : undefined}
+          aria-hidden={guideModal || restart ? true : undefined}
+        >
           <div className="breadcrumb">
             <BookOpen size={15} /> 실습실 <ChevronRight size={13} />
             <strong>백오피스 QC 온보딩</strong>
@@ -460,26 +528,36 @@ function App() {
           </div>
         </header>
         <main>
-          <div className="page-heading">
+          <div
+            className="page-heading"
+            inert={guideModal || restart ? true : undefined}
+          >
             <div>
               <div className="eyebrow">LEARN BY DOING</div>
               <h1>
-                백오피스, 직접 해보면 쉬워요<span> ✦</span>
+                부캉이와 함께하는 첫 QC 업무<span> ✦</span>
               </h1>
               <p>
                 첫 QC부터 검출 관리까지. 작은 미션으로 시작하는 나의 첫 업무.
               </p>
             </div>
-            <button className="button light" onClick={() => setRestart(true)}>
+            <button
+              className="button light"
+              data-replay-control
+              onClick={() => setRestart(true)}
+            >
               <RotateCcw size={15} /> 튜토리얼 다시 보기
             </button>
           </div>
-          <section className="journey">
+          <section
+            className="journey"
+            inert={guideModal || restart ? true : undefined}
+          >
             <div className="journey-icon">
               <Target size={22} />
             </div>
             <div className="journey-copy">
-              <strong>신입 매니저의 첫 번째 퀘스트</strong>
+              <strong>신입 QC 매니저의 첫 업무 탐험</strong>
               <span>
                 QC 검출 마스터하기 <b>· 약 10분</b>
               </span>
@@ -502,7 +580,11 @@ function App() {
             </div>
           </section>
           <div className="work-layout">
-            <section className="workspace-panel">
+            <section
+              className="workspace-panel"
+              inert={guideModal || restart ? true : undefined}
+              aria-hidden={guideModal || restart ? true : undefined}
+            >
               <div className="panel-top">
                 <div className="panel-breadcrumb">
                   {s.page === "home" ? (
@@ -551,7 +633,7 @@ function App() {
                   <p>
                     문장에서 검출할 정보를 찾고, 직접 표시해 보세요.
                     <br />
-                    가이드 루미가 모든 과정을 함께할게요.
+                    상어 부캉이가 모든 과정을 함께할게요.
                   </p>
                   <div className="welcome-features">
                     <span>
@@ -563,12 +645,9 @@ function App() {
                   </div>
                   <button
                     className="button primary"
-                    onClick={() => {
-                      if (!s.started) setS({ ...s, started: true });
-                      else navigate("workspace");
-                    }}
+                    onClick={() => navigate("workspace")}
                   >
-                    {s.started ? "워크스페이스 열기" : "튜토리얼 시작하기"}
+                    워크스페이스 열기
                     <ArrowRight size={16} />
                   </button>
                 </div>
@@ -581,6 +660,26 @@ function App() {
                       <p>기관을 선택하고 QC 업무를 시작하세요.</p>
                     </div>
                     <span className="soft-tag">전체 1개</span>
+                  </div>
+                  <div className="workspace-summary">
+                    <div>
+                      워크스페이스
+                      <strong>
+                        1 <small>개</small>
+                      </strong>
+                    </div>
+                    <div>
+                      지원자
+                      <strong>
+                        1 <small>명</small>
+                      </strong>
+                    </div>
+                    <div>
+                      기관수
+                      <strong>
+                        1 <small>곳</small>
+                      </strong>
+                    </div>
                   </div>
                   <div className="toolbar">
                     <span className="tab active">
@@ -598,7 +697,8 @@ function App() {
                   </div>
                   <div className="table-head org-grid">
                     <span>기관명</span>
-                    <span>등록 파일</span>
+                    <span>공고명</span>
+                    <span>인원수</span>
                     <span>상태</span>
                     <span />
                   </div>
@@ -615,7 +715,8 @@ function App() {
                           <small>2026년 신입사원 공개채용</small>
                         </span>
                       </span>
-                      <span>2개</span>
+                      <span>2026년 신입사원 공개채용</span>
+                      <span>1명</span>
                       <span className="status orange">QC 중</span>
                       <ChevronRight size={16} />
                     </button>
@@ -661,11 +762,25 @@ function App() {
                     </div>
                   </div>
                   <h3 className="subheading">
+                    원본 파일 <span>1</span>
+                  </h3>
+                  <div className="source-files">
+                    <FileSpreadsheet size={17} />
+                    <span>한빛공사_가상지원자.xlsx</span>
+                    <span className="status green-bg">처리 완료</span>
+                    <span>2026-11-03</span>
+                  </div>
+                  <div className="company-note">
+                    메모 · 실습용 가상 데이터입니다. 실제 지원자 정보는 포함하지
+                    않습니다.
+                  </div>
+                  <h3 className="subheading">
                     OP 결과 파일 <span>2</span>
                   </h3>
                   <div className="table-head file-grid">
                     <span>파일명</span>
                     <span>파일 크기</span>
+                    <span>최근 수정</span>
                     <span>작업</span>
                   </div>
                   {FILES.map((f) => (
@@ -694,6 +809,7 @@ function App() {
                         </div>
                       </div>
                       <span className="muted">{f.size}</span>
+                      <span className="muted file-date">2026-11-03</span>
                       <button
                         className={
                           "button compact light" + focus("file" + f.id)
@@ -713,6 +829,22 @@ function App() {
               )}
               {(s.page === "editor" || s.page === "task") && (
                 <div className="editor">
+                  <div className="qc-summary">
+                    <span>
+                      QC 진행도{" "}
+                      <strong>
+                        {s.completedFiles.includes(s.fileId)
+                          ? "1 / 1"
+                          : "0 / 1"}
+                      </strong>
+                    </span>
+                    <span>
+                      미검출 <strong>{active.length ? "0명" : "1명"}</strong>
+                    </span>
+                    <span>
+                      최종 검출 <strong>{active.length ? "1명" : "0명"}</strong>
+                    </span>
+                  </div>
                   <div className="editor-header">
                     <button
                       className="text-button"
@@ -754,6 +886,7 @@ function App() {
                       <button
                         key={c}
                         className={s.category === c ? "active" : ""}
+                        data-guide={c === "출신지역" ? "category" : undefined}
                         aria-pressed={s.category === c}
                         onClick={() =>
                           setS({ ...s, category: s.category === c ? null : c })
@@ -785,7 +918,9 @@ function App() {
                         <strong>
                           지원자 001<small>일반행정 · 신입</small>
                         </strong>
-                        <span className="online" />
+                        {s.completedFiles.includes(s.fileId) && (
+                          <CheckCheck size={16} className="green" />
+                        )}
                       </div>
                       <div className="applicant-note">
                         가상 지원자
@@ -804,10 +939,14 @@ function App() {
                         {[1, 2, 3].map((n) => (
                           <button
                             key={n}
+                            data-guide={"question" + n}
                             className={question === n ? "active" : ""}
                             onClick={() => {
-                              setQuestion(n);
-                              setViewed([...new Set([...viewed, n])]);
+                              setS({
+                                ...s,
+                                question: n,
+                                viewed: [...new Set([...viewed, n])],
+                              });
                             }}
                           >
                             {n}번 문항{" "}
@@ -830,7 +969,15 @@ function App() {
                         className={"selectable-text" + focus("text")}
                         ref={bodyRef}
                         data-testid="document-text"
-                        onPointerDown={() => {
+                        onPointerDown={(e) => {
+                          if (
+                            (action.target !== "text" && !(s.done && m.text)) ||
+                            guideModal
+                          ) {
+                            e.preventDefault();
+                            say(action.line, "error");
+                            return;
+                          }
                           window.getSelection()?.removeAllRanges();
                           gesture.current = {
                             key: keys.current.has("d")
@@ -858,6 +1005,7 @@ function App() {
                           </span>
                           <button
                             className="button light compact"
+                            data-guide="review"
                             disabled={viewed.length !== 3}
                             onClick={reviewComplete}
                           >
@@ -866,41 +1014,41 @@ function App() {
                         </div>
                       )}
                     </article>
-                  </div>
-                  <div className="detection-list">
-                    <div className="subheading">
-                      검출 내역 <span>{active.length}</span>
-                      <small>모든 파일 · QC스페이스 동기화</small>
-                    </div>
-                    {active.length ? (
-                      active.map((r) => (
-                        <div className="detection-row" key={r.id}>
-                          <span
-                            className={
-                              "category-label " +
-                              (r.category === "출신지역" ? "blue-label" : "")
-                            }
-                          >
-                            {r.category}
-                          </span>
-                          <strong>{r.text}</strong>
-                          <span className="muted">
-                            범위 {r.start}–{r.end}
-                          </span>
-                          <span className="source">
-                            {r.sourceFileId !== s.fileId && (
-                              <LockKeyhole size={12} />
-                            )}{" "}
-                            원본 파일 {r.sourceFileId}
-                          </span>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="empty small">
-                        검출 내역이 없습니다. 텍스트를 드래그해 첫 검출을 만들어
-                        보세요.
+                    <div className="detection-list">
+                      <div className="subheading">
+                        검출 내역 <span>{active.length}</span>
+                        <small>모든 파일 · QC스페이스 동기화</small>
                       </div>
-                    )}
+                      {active.length ? (
+                        active.map((r) => (
+                          <div className="detection-row" key={r.id}>
+                            <span
+                              className={
+                                "category-label " +
+                                (r.category === "출신지역" ? "blue-label" : "")
+                              }
+                            >
+                              {r.category}
+                            </span>
+                            <strong>{r.text}</strong>
+                            <span className="muted">
+                              범위 {r.start}–{r.end}
+                            </span>
+                            <span className="source">
+                              {r.sourceFileId !== s.fileId && (
+                                <LockKeyhole size={12} />
+                              )}{" "}
+                              원본 파일 {r.sourceFileId}
+                            </span>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="empty small">
+                          검출 내역이 없습니다. 텍스트를 드래그해 첫 검출을
+                          만들어 보세요.
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -965,13 +1113,20 @@ function App() {
             <TutorialGuide
               s={s}
               m={m}
+              action={action}
+              notice={notice}
+              start={() => setS({ ...s, started: true })}
+              dismissIntro={() => setS({ ...s, intro: false })}
               next={next}
               previous={previous}
-              setRestart={setRestart}
+              setRestart={(index) =>
+                typeof index === "number" ? reset(index) : setRestart(index)
+              }
             />
           </div>
-          {notice && (
+          {notice && !guideModal && (
             <div
+              data-tutorial-controls
               className={"notice " + notice.type}
               role={notice.type === "error" ? "alert" : "status"}
             >
@@ -993,7 +1148,7 @@ function App() {
               © 2026 QC Academy. Learning starts with a little practice.
             </span>
             <span>
-              <span className="dot" /> PDF 1–7페이지 기반 · 프런트엔드 실습 목업
+              <span className="dot" /> PDF 1–7페이지 참고 · 가상 데이터 실습
             </span>
           </footer>
         </main>

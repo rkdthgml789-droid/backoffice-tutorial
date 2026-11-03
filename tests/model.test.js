@@ -57,3 +57,18 @@ test("기능별 재시작의 데이터는 새로 초기화된다", () => {
   assert.equal(initialState(0).started, false);
   assert.notEqual(initialState(6).records[0].id, initialState(6).records[0].id);
 });
+
+test("검출과 취소 이벤트는 같은 ID에 순서대로 남는다", () => {
+  const created = createDetection([], school);
+  const cancelled = cancelDetection(created.records, school);
+  assert.deepEqual(
+    cancelled.records[0].history.map((e) => e.type),
+    ["detected", "cancelled"],
+  );
+  assert.equal(cancelled.records[0].id, created.record.id);
+  assert.ok(
+    cancelled.records[0].history.every(
+      (e) => e.fileId === "A" && !Number.isNaN(Date.parse(e.at)),
+    ),
+  );
+});
